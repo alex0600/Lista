@@ -1,314 +1,316 @@
 import streamlit as st
 import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
+from google import genai
+from google.genai import types
+from pydantic import BaseModel
+import concurrent.futures
+import requests
+import urllib.parse
+from datetime import datetime
 
 # ==============================================================================
-# CONFIGURACIÓN Y DISEÑO CSS
+# 1. CONFIGURACIÓN E INFRAESTRUCTURA VISUAL (Warm Sand & Discreción)
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="CERO Compras", page_icon="🛒")
+# Título y favicon discretos para el navegador
+st.set_page_config(layout="wide", page_title="Dashboard UI", page_icon="📊")
 
-smoked_glass = (
-    "background: rgba(255,255,255,0.033); "
-    "backdrop-filter: blur(10px); "
-    "-webkit-backdrop-filter: blur(10px); "
-    "border-radius: 14px; "
-    "border: 1px solid rgba(255,255,255,0.07); "
-    "border-top: 1px solid rgba(255,255,255,0.11); "
-    "padding: 15px;"
-)
+bg_main   = "#1a1510"
+glow_a    = "rgba(217,119,6,0.15)"
+glow_b    = "rgba(100,60,10,0.1)"
+accent    = "#F59E0B"
+accent_rgb= "245,158,11"
+text_main = "#FEF3C7"
+text_muted= "rgba(254,243,199,0.4)"
 
-st.markdown("""
+# Emojis solo para organización visual de categorías
+CAT_EMOJIS = {
+    "Frutas": "🍎", "Verduras": "🥦", "Lácteos": "🥛", 
+    "Despensa": "🥫", "Carnes": "🥩", "Limpieza": "🧼", 
+    "Aseo Personal": "🧴", "Bebidas": "🥤"
+}
+
+st.markdown(f"""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap');
-
-  /* ── Fondo principal con rayas diagonales ember ── */
-  .stApp {
-    background-color: #0c0c0e;
-    background-image:
-      repeating-linear-gradient(
-        135deg,
-        transparent,
-        transparent 28px,
-        rgba(234,88,12,0.10) 28px,
-        rgba(234,88,12,0.10) 30px
-      ),
-      radial-gradient(ellipse at 75% 85%, rgba(234,88,12,0.13) 0%, transparent 58%),
-      radial-gradient(ellipse at 18% 18%, rgba(180,60,0,0.08) 0%, transparent 52%);
-    font-family: 'DM Sans', sans-serif;
-    color: #F5EDE4;
-  }
-
-  /* ── Sidebar ── */
-  [data-testid="stSidebar"] {
-    background: #111114 !important;
-    border-right: 1px solid rgba(255,255,255,0.05);
-  }
-  [data-testid="stSidebar"] * { color: #F5EDE4 !important; font-family: 'DM Sans', sans-serif !important; }
-
-  /* ── Tipografía global ── */
-  h1, h2, h3 {
-    font-family: 'Syne', sans-serif !important;
-    font-weight: 800 !important;
-    color: #F5EDE4 !important;
-    letter-spacing: -0.5px;
-  }
-  h1 { font-size: 1.9rem !important; }
-  p, span, label, div, li { color: #F5EDE4 !important; font-family: 'DM Sans', sans-serif !important; }
-
-  /* ── Tabs ── */
-  [data-testid="stTabs"] [role="tablist"] {
-    background: rgba(255,255,255,0.025);
-    border-radius: 10px;
-    padding: 3px;
-    border: 1px solid rgba(255,255,255,0.06);
-    gap: 2px;
-  }
-  [data-testid="stTabs"] button[role="tab"] {
-    font-family: 'Syne', sans-serif !important;
-    font-weight: 600 !important;
-    font-size: 13px !important;
-    color: rgba(245,237,228,0.45) !important;
-    border-radius: 8px !important;
-    border: none !important;
-    background: transparent !important;
-    padding: 6px 14px !important;
-    transition: all 0.15s;
-  }
-  [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
-    background: rgba(234,88,12,0.18) !important;
-    color: #EA580C !important;
-    border: 1px solid rgba(234,88,12,0.35) !important;
-  }
-  [data-testid="stTabs"] button[role="tab"]:hover {
-    color: #F5EDE4 !important;
-    background: rgba(255,255,255,0.04) !important;
-  }
-
-  /* ── Inputs y selects ── */
-  input, textarea,
-  [data-testid="stNumberInput"] input,
-  [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-  [data-testid="stTextInput"] input {
-    background: rgba(255,255,255,0.04) !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 8px !important;
-    color: #F5EDE4 !important;
-    font-family: 'DM Sans', sans-serif !important;
-  }
-  [data-testid="stNumberInput"] input:focus,
-  [data-testid="stSelectbox"] div[data-baseweb="select"] > div:focus-within,
-  [data-testid="stTextInput"] input:focus {
-    border-color: rgba(234,88,12,0.50) !important;
-    box-shadow: 0 0 0 2px rgba(234,88,12,0.08) !important;
-  }
-  .stSelectbox label, .stNumberInput label, .stTextInput label {
-    font-size: 12px !important;
-    color: rgba(245,237,228,0.45) !important;
-    font-family: 'DM Sans', sans-serif !important;
-  }
-
-  /* ── Botones ── */
-  .stButton > button {
-    background: rgba(234,88,12,0.14) !important;
-    border: 1px solid rgba(234,88,12,0.38) !important;
-    border-radius: 9px !important;
-    color: #EA580C !important;
-    font-family: 'Syne', sans-serif !important;
-    font-size: 12.5px !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.2px;
-    transition: background 0.15s, box-shadow 0.15s;
-  }
-  .stButton > button:hover {
-    background: rgba(234,88,12,0.26) !important;
-    box-shadow: 0 0 14px rgba(234,88,12,0.14) !important;
-  }
-  .stButton > button:disabled {
-    background: rgba(255,255,255,0.04) !important;
-    border-color: rgba(255,255,255,0.10) !important;
-    color: rgba(245,237,228,0.30) !important;
-  }
-
-  /* ── Botón primary ── */
-  .stButton > button[kind="primary"] {
-    background: rgba(234,88,12,0.28) !important;
-    border-color: rgba(234,88,12,0.65) !important;
-    box-shadow: 0 0 18px rgba(234,88,12,0.18) !important;
-  }
-
-  /* ── Divisores ── */
-  hr, [data-testid="stDivider"] { border-color: rgba(255,255,255,0.06) !important; }
-
-  /* ── Info / Warning / Success ── */
-  [data-testid="stAlert"] {
-    background: rgba(234,88,12,0.08) !important;
-    border: 1px solid rgba(234,88,12,0.22) !important;
-    border-radius: 12px !important;
-    color: #F5EDE4 !important;
-  }
-  [data-testid="stAlert"][data-baseweb="notification"][kind="warning"] {
-    background: rgba(217,119,6,0.10) !important;
-    border-color: rgba(217,119,6,0.28) !important;
-  }
-  [data-testid="stAlert"][data-baseweb="notification"][kind="success"] {
-    background: rgba(16,185,129,0.09) !important;
-    border-color: rgba(16,185,129,0.28) !important;
-  }
-
-  /* ── File uploader ── */
-  [data-testid="stFileUploader"] {
-    background: rgba(255,255,255,0.03) !important;
-    border: 1px dashed rgba(234,88,12,0.30) !important;
-    border-radius: 12px !important;
-  }
-
-  /* ── Metric / write boxes ── */
-  [data-testid="stMetric"] {
-    background: rgba(255,255,255,0.03);
-    border-radius: 10px;
-    padding: 8px 12px;
-    border: 1px solid rgba(255,255,255,0.06);
-  }
-
-  /* ── Scrollbar ── */
-  ::-webkit-scrollbar { width: 5px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(234,88,12,0.30); border-radius: 4px; }
+    .stApp {{
+        background-color: {bg_main};
+        background-image: radial-gradient(ellipse at 20% 25%, {glow_a} 0%, transparent 55%), 
+                          radial-gradient(ellipse at 80% 75%, {glow_b} 0%, transparent 50%);
+        color: {text_main};
+    }}
+    h1, h2, h3, p, span, label, div {{ color: {text_main} !important; }}
+    
+    .glass-card {{
+        background: rgba(255,255,255,0.03); 
+        border: 1px solid rgba(255,255,255,0.06); 
+        border-top: 1px solid rgba(255,255,255,0.1);
+        border-radius: 16px; 
+        padding: 1.2rem; 
+        margin-bottom: 0.75rem; 
+        transition: border-color 0.2s;
+    }}
+    .glass-card.selected {{
+        border: 1.5px solid rgba({accent_rgb}, 0.6); 
+        background: rgba({accent_rgb}, 0.05);
+    }}
+    .card-emoji {{ font-size: 32px; text-align: center; margin-bottom: 5px; opacity: 0.9; }}
+    .card-title {{ font-size: 17px !important; font-weight: 600; color: {accent} !important; margin: 0 0 2px 0; }}
+    .card-sub {{ font-size: 13px !important; color: {text_muted} !important; margin: 0; }}
+    .badge {{
+        display: inline-block; font-size: 10px !important; padding: 2px 8px; border-radius: 20px;
+        background: rgba({accent_rgb}, 0.1); color: {accent} !important; 
+        border: 1px solid rgba({accent_rgb}, 0.2); margin-left: 6px;
+    }}
+    .card-divider {{ border: none; border-top: 1px solid rgba(255,255,255,0.05); margin: 12px 0; }}
+    
+    [data-testid="stNumberInput"] input, [data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
+        background: rgba(255,255,255,0.04) !important; 
+        border: 1px solid rgba(255,255,255,0.08) !important; 
+        border-radius: 8px !important; 
+        color: {text_main} !important;
+    }}
+    .stButton > button {{
+        background: rgba({accent_rgb}, 0.1) !important; 
+        border: 1px solid rgba({accent_rgb}, 0.3) !important;
+        border-radius: 8px !important; 
+        color: {accent} !important; 
+        transition: background 0.2s; 
+        width: 100%;
+    }}
+    .stButton > button:hover {{ background: rgba({accent_rgb}, 0.2) !important; }}
+    hr {{ border-color: rgba(255,255,255,0.07) !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-# Diccionario de iconos
-ICONOS = {"Frutas": "🍎", "Verduras": "🥦", "Lacteos": "🥛", "Despensa": "🥫", "Carnes": "🥩", "Limpieza": "🧼", "Todas": "🔍"}
+# ==============================================================================
+# 2. MOTORES DE DATOS Y CONEXIÓN
+# ==============================================================================
+@st.cache_resource
+def conectar_google():
+    cred_info = dict(st.secrets["gcp_service_account"])
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(cred_info, scopes=scope)
+    return gspread.authorize(creds)
 
-# Inicializar memoria rápida (Carrito)
+@st.cache_data(ttl=300)
+def cargar_datos(_client):
+    try:
+        sh = _client.open_by_url(st.secrets["sheets"]["spreadsheet_url"])
+        df_cat = pd.DataFrame(sh.worksheet("Catalogo").get_all_records())
+        df_tickets = pd.DataFrame(sh.worksheet("Tickets").get_all_records())
+        return df_cat, df_tickets
+    except Exception as e:
+        st.error(f"Error de conexión: {e}")
+        st.stop()
+
+# Esquemas de IA
+class PrecioIA(BaseModel):
+    encontrado: bool
+    nombre_tienda: str
+    precio: float
+
+class TicketIA(BaseModel):
+    items: list[dict]
+
+# ==============================================================================
+# 3. LÓGICA DE ESTADO
+# ==============================================================================
 if "carrito" not in st.session_state:
     st.session_state.carrito = []
 
-# Función para saber si una variante exacta ya está en el carrito
-def producto_en_carrito(id_prod):
-    return any(item.get('ID') == id_prod for item in st.session_state.carrito)
+def en_carrito(id_prod):
+    return any(p['ID'] == id_prod for p in st.session_state.carrito)
+
+client_gs = conectar_google()
+df_catalogo, df_tickets = cargar_datos(client_gs)
 
 # ==============================================================================
-# UI PRINCIPAL
+# 4. INTERFAZ Y PESTAÑAS
 # ==============================================================================
-st.title("🛒 CERO Compras — Optimizador")
+st.markdown("<h2 style='text-align: center; color: #F59E0B;'>Workspace Analytics</h2>", unsafe_allow_html=True)
 
-tab_busca, tab_lista, tab_compara, tab_ticket = st.tabs(
-    ["🔍 Buscador", "📋 Mi Lista", "⚡ Comparador", "🧾 Subir Ticket"]
-)
+tab_busca, tab_lista, tab_compara, tab_ticket = st.tabs(["Directorio", "Selección", "Análisis Web", "Recibos"])
 
-# ------------------------------------------------------------------------------
-# TAB 1: BUSCADOR
-# ------------------------------------------------------------------------------
+# --- TAB 1: BUSCADOR ---
 with tab_busca:
-    df_cat = pd.DataFrame({
-        "ID": ["001", "002", "003", "004", "005", "006", "007"],
-        "Producto": ["Manzana", "Leche Lala", "Leche Lala", "Leche Lala", "Pan Bimbo", "Huevo San Juan", "Tomate"],
-        "Variante": ["Roja", "Deslactosada", "Light", "Entera", "Blanco Grande", "Blanco 18 pz", "Bola"],
-        "Categoria": ["Frutas", "Lacteos", "Lacteos", "Lacteos", "Despensa", "Lacteos", "Verduras"]
-    })
+    if df_catalogo.empty:
+        st.warning("El directorio está vacío.")
+    else:
+        c1, c2 = st.columns([2, 1])
+        busqueda = c1.text_input("Buscar ítem...", placeholder="Ej. Lácteos...")
+        categorias = ["Todas"] + list(df_catalogo['Categoria'].unique())
+        categoria = c2.selectbox("Filtro", categorias)
 
-    c1, c2 = st.columns([2, 1])
-    busqueda = c1.text_input("Buscar producto...", placeholder="Ej. Lala, Manzana, Jabón...")
-    categoria = c2.selectbox("Categoría", ["Todas"] + list(df_cat['Categoria'].unique()))
+        df_filt = df_catalogo.copy()
+        if busqueda:
+            df_filt = df_filt[df_filt['Producto'].str.contains(busqueda, case=False) | df_filt['Variante'].str.contains(busqueda, case=False)]
+        if categoria != "Todas":
+            df_filt = df_filt[df_filt['Categoria'] == categoria]
 
-    df_filt = df_cat.copy()
-    if busqueda:
-        df_filt = df_filt[
-            df_filt['Producto'].str.contains(busqueda, case=False) |
-            df_filt['Variante'].str.contains(busqueda, case=False)
-        ]
-    if categoria != "Todas":
-        df_filt = df_filt[df_filt['Categoria'] == categoria]
+        productos_base = df_filt['Producto'].unique()
+        
+        cols = st.columns(3)
+        for i, prod in enumerate(productos_base[:30]):
+            with cols[i % 3]:
+                var_df = df_filt[df_filt['Producto'] == prod]
+                cat_actual = var_df.iloc[0]['Categoria']
+                emoji = CAT_EMOJIS.get(cat_actual, "📦")
+                
+                estado_clase = "selected" if any(en_carrito(pid) for pid in var_df['ID'].tolist()) else ""
+                
+                st.markdown(f"""
+                <div class="glass-card {estado_clase}">
+                    <div class="card-emoji">{emoji}</div>
+                    <p class="card-title">{prod}</p>
+                    <p class="card-sub">{cat_actual} <span class="badge">{len(var_df)} var</span></p>
+                    <hr class="card-divider">
+                </div>
+                """, unsafe_allow_html=True)
+                
+                lista_vars = var_df['Variante'].tolist()
+                var_sel = st.selectbox("Variante", lista_vars, key=f"v_{prod}", label_visibility="collapsed")
+                id_sel = var_df[var_df['Variante'] == var_sel]['ID'].values[0]
+                
+                col_q, col_u = st.columns(2)
+                cant = col_q.number_input("Cant.", min_value=0.5, value=1.0, step=0.5, key=f"q_{prod}")
+                uni = col_u.selectbox("Unidad", ["pz", "kg", "L", "paq"], key=f"u_{prod}")
+                
+                if en_carrito(id_sel):
+                    st.button("✓ En selección", key=f"b_{prod}", disabled=True)
+                else:
+                    if st.button("＋ Agregar", key=f"b_{prod}"):
+                        st.session_state.carrito.append({"ID": id_sel, "Producto": prod, "Variante": var_sel, "Cantidad": cant, "Unidad": uni})
+                        st.rerun()
 
-    productos_base = df_filt['Producto'].unique()
-    st.markdown(
-        f"<p style='font-size:12px; color:rgba(245,237,228,0.40); margin-bottom:12px;'>"
-        f"Mostrando {len(productos_base)} productos base</p>",
-        unsafe_allow_html=True
-    )
-
-    cols = st.columns(3)
-
-    for i, prod in enumerate(productos_base):
-        with cols[i % 3]:
-            variantes_df = df_filt[df_filt['Producto'] == prod]
-            cat_actual = variantes_df.iloc[0]['Categoria']
-            icono = ICONOS.get(cat_actual, "📦")
-
-            st.markdown(f"""
-            <div style="{smoked_glass} margin-bottom: 10px; text-align: center;
-                         position: relative; overflow: hidden;">
-                <div style="
-                    position: absolute; top:0; left:0; right:0; height:2px;
-                    background: linear-gradient(90deg, transparent, rgba(234,88,12,0.7), transparent);
-                "></div>
-                <div style="font-size:34px; line-height:1; margin-bottom:6px;">{icono}</div>
-                <b style="font-size:17px; color:#EA580C;
-                   font-family:'Syne',sans-serif; letter-spacing:0.2px;">{prod}</b>
-            </div>
-            """, unsafe_allow_html=True)
-
-            lista_variantes = variantes_df['Variante'].tolist()
-            var_seleccionada = st.selectbox("Elige el tipo:", lista_variantes, key=f"var_{prod}")
-            id_seleccionado = variantes_df[variantes_df['Variante'] == var_seleccionada]['ID'].values[0]
-
-            col_q, col_u = st.columns([1, 1])
-            cant = col_q.number_input("Cantidad", min_value=0.5, value=1.0, step=0.5, key=f"cant_{prod}")
-            uni = col_u.selectbox("Medida", ["pz", "kg", "L", "g", "paquete"], key=f"uni_{prod}")
-
-            ya_agregado = producto_en_carrito(id_seleccionado)
-            if ya_agregado:
-                st.button("✅ En Lista", key=f"btn_{prod}", disabled=True, use_container_width=True)
-            else:
-                if st.button("🛒 Añadir", key=f"btn_{prod}", use_container_width=True):
-                    st.session_state.carrito.append({
-                        "ID": id_seleccionado,
-                        "Producto": prod,
-                        "Variante": var_seleccionada,
-                        "Cantidad": cant,
-                        "Unidad": uni
-                    })
-                    st.rerun()
-
-            st.write("---")
-
-# ------------------------------------------------------------------------------
-# TAB 2: MI LISTA
-# ------------------------------------------------------------------------------
+# --- TAB 2: MI LISTA ---
 with tab_lista:
-    st.subheader("Tu Lista para la Semana")
-
     if not st.session_state.carrito:
-        st.info("No hay productos en tu carrito. ¡Ve al buscador!")
+        st.info("No hay ítems seleccionados.")
     else:
         for item in st.session_state.carrito:
-            c1, c2, c3 = st.columns([4, 2, 1])
-            c1.write(f"🔹 **{item['Producto']}** — {item.get('Variante', '')}")
-            cantidad_segura = item.get('Cantidad', 1)
-            unidad_segura = item.get('Unidad', 'pz')
-            c2.write(f"**{cantidad_segura} {unidad_segura}**")
-            if c3.button("🗑️", key=f"del_{item['ID']}"):
+            c1, c2, c3 = st.columns([3, 1, 1])
+            c1.write(f"**{item['Producto']}** ({item['Variante']})")
+            c2.write(f"{item['Cantidad']} {item['Unidad']}")
+            if c3.button("Remover", key=f"del_{item['ID']}"):
                 st.session_state.carrito = [p for p in st.session_state.carrito if p['ID'] != item['ID']]
                 st.rerun()
-
+        
         st.divider()
-        if st.button("☁️ Guardar Lista en la Nube", type="primary"):
-            st.success("¡Lista guardada en Google Sheets (Simulado)!")
+        if st.button("☁️ Sincronizar Base de Datos", type="primary"):
+            try:
+                hoja_activa = client_gs.open_by_url(st.secrets["sheets"]["spreadsheet_url"]).worksheet("Carrito_Activo")
+                hoja_activa.clear() 
+                datos_sync = [["ID", "Producto", "Variante", "Cantidad", "Unidad"]]
+                datos_sync.extend([[p['ID'], p['Producto'], p['Variante'], p['Cantidad'], p['Unidad']] for p in st.session_state.carrito])
+                hoja_activa.update("A1", datos_sync)
+                st.success("¡Sincronización exitosa!")
+            except Exception as e:
+                st.error(f"Error: {e}")
 
-# ------------------------------------------------------------------------------
-# TAB 3: COMPARADOR EN VIVO
-# ------------------------------------------------------------------------------
+# --- TAB 3: COMPARADOR ---
 with tab_compara:
-    st.subheader("Cotización Inteligente")
     if not st.session_state.carrito:
-        st.warning("Agrega productos primero en el Buscador.")
+        st.warning("Selecciona ítems primero.")
     else:
-        st.info("💡 Aquí irá la integración con ScraperAPI y Walmart/Sams/Alsuper.")
+        if st.button("🚀 Iniciar Análisis Concurrente"):
+            
+            def buscar_precio(prod, variante, tienda):
+                query = urllib.parse.quote(f"{prod} {variante}")
+                url_map = {"Walmart": f"https://super.walmart.com.mx/buscar?q={query}", 
+                           "Alsuper": f"https://alsuper.com/search?q={query}"}
+                try:
+                    r = requests.get('http://api.scraperapi.com', 
+                                     params={'api_key': st.secrets["scraperapi"]["api_key"], 
+                                             'url': url_map[tienda], 'render': 'true'}, timeout=45)
+                    if r.status_code != 200: return {"tienda": tienda, "error": True, "msg": f"Status API: {r.status_code}"}
+                    
+                    ai_client = genai.Client(api_key=st.secrets["gemini"]["api_key"])
+                    prompt = f"HTML de {tienda}. Busca {prod} {variante} en CP 31200. Devuelve el precio."
+                    res = ai_client.models.generate_content(
+                        model="gemini-2.0-flash", 
+                        contents=[r.text[:300000], prompt], 
+                        config=types.GenerateContentConfig(response_mime_type="application/json", 
+                                                         response_schema=PrecioIA)
+                    )
+                    return {"tienda": tienda, "data": res.parsed, "error": False}
+                except Exception as err:
+                    return {"tienda": tienda, "error": True, "msg": str(err)}
 
-# ------------------------------------------------------------------------------
-# TAB 4: SUBIR TICKET
-# ------------------------------------------------------------------------------
+            resultados_guardar = []
+            fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+            
+            with st.status("Analizando fuentes web...", expanded=True) as status:
+                for item in st.session_state.carrito:
+                    st.write(f"Procesando: **{item['Producto']}**")
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        futuros = [executor.submit(buscar_precio, item['Producto'], item['Variante'], t) for t in ["Walmart", "Alsuper"]]
+                        
+                        cols_res = st.columns(2)
+                        for idx, fut in enumerate(concurrent.futures.as_completed(futuros)):
+                            res = fut.result()
+                            with cols_res[idx]:
+                                if not res["error"] and res["data"].encontrado:
+                                    st.success(f"{res['tienda']}: ${res['data'].precio}")
+                                    resultados_guardar.append([item['ID'], res['tienda'], res['data'].precio, fecha_hoy])
+                                else:
+                                    # MOSTRAR EL ERROR REAL AQUÍ
+                                    mensaje_error = res.get('msg', 'No disponible / No encontrado')
+                                    st.error(f"{res['tienda']}: {mensaje_error}")
+                    st.divider()
+                status.update(label="Análisis completado.", state="complete", expanded=False)
+
+            if resultados_guardar:
+                try:
+                    hoja_hist = client_gs.open_by_url(st.secrets["sheets"]["spreadsheet_url"]).worksheet("Historial_Precios")
+                    hoja_hist.append_rows(resultados_guardar)
+                    st.toast("Historial actualizado.")
+                except Exception as e:
+                    st.error(f"Error al guardar: {e}")
+
+# --- TAB 4: TICKETS ---
 with tab_ticket:
-    st.subheader("Registrar Compra Final")
-    st.write("Sube la foto de tu ticket para registrar precios reales y gastos extra.")
-    st.file_uploader("Tomar foto o subir archivo", type=['jpg', 'jpeg', 'png'])
+    col_t1, col_t2 = st.columns([2, 1])
+    
+    with col_t2:
+        st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+        st.markdown("<p class='card-sub'>Gasto Acumulado</p>", unsafe_allow_html=True)
+        try:
+            if not df_tickets.empty and 'Precio_Pagado' in df_tickets.columns:
+                total_gastado = pd.to_numeric(df_tickets['Precio_Pagado'], errors='coerce').sum()
+                st.markdown(f"<h2 style='color:#10B981; margin:0;'>${total_gastado:,.2f}</h2>", unsafe_allow_html=True)
+            else:
+                st.markdown("<h2 style='color:#10B981; margin:0;'>$0.00</h2>", unsafe_allow_html=True)
+        except Exception as e:
+            st.markdown("<h2 style='color:#10B981; margin:0;'>$0.00</h2>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col_t1:
+        foto = st.file_uploader("Documento de respaldo", type=['jpg', 'jpeg', 'png'])
+        if foto and st.button("Analizar Documento"):
+            with st.spinner("Procesando con IA..."):
+                try:
+                    ai_client = genai.Client(api_key=st.secrets["gemini"]["api_key"])
+                    prompt = "Extrae productos y precios del ticket. Clasifica: Esencial o Extra."
+                    imagen_part = types.Part.from_bytes(data=foto.getvalue(), mime_type=foto.type)
+                    
+                    res = ai_client.models.generate_content(
+                        model="gemini-2.0-flash", 
+                        contents=[imagen_part, prompt], 
+                        config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=TicketIA)
+                    )
+                    
+                    datos_extraidos = res.parsed.items
+                    # CORREGIDO EL BUG DE DUPLICIDAD EN LA CLAVE "SECRETS" AQUÍ
+                    hoja_tickets = client_gs.open_by_url(st.secrets["sheets"]["spreadsheet_url"]).worksheet("Tickets")
+                    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+                    
+                    filas_ticket = []
+                    for d in datos_extraidos:
+                        filas_ticket.append([fecha_hoy, "Local", d.get("item", "Desc"), d.get("precio", 0), d.get("tipo", "ND")])
+                        st.write(f"- {d.get('item')}: ${d.get('precio')}")
+                    
+                    hoja_tickets.append_rows(filas_ticket)
+                    st.success("Documento registrado.")
+                except Exception as e:
+                    st.error(f"Error: {e}")
